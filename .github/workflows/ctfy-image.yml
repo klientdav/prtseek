@@ -41,20 +41,27 @@ jobs:
             echo "::error::secret CTFY_REGISTRY_TOKEN is empty — add a pf_ API token (Settings → API 令牌)."
             exit 1
           fi
-          # The namespace is the last path segment of the prefix; the repository
-          # is the image name we are about to push.
           NAMESPACE="${PREFIX#registry.ctfy.io/}"
           REPO="${NAMESPACE}/prtseek-ctfy"
-          TOKEN=$(curl -fsS -H "Authorization: Bearer ${CTFY_REGISTRY_TOKEN}" \
-            "https://ctfy.tsinghua.edu.cn/api/v1/registry/token?service=registry.ctfy.io&scope=repository:${REPO}:push,pull" \
+          # The token server authenticates the pf_ token as BASIC auth (any
+          # username, the token as password) — docker's own flow. Sending it as
+          # a Bearer header mints a token whose "access" list is empty, which
+          # then fails every push with insufficient_scope.
+          TOKEN=$(curl -fsS -u "ctfy:${CTFY_REGISTRY_TOKEN}" \
+            "https://registry.ctfy.io/api/v1/registry/token?service=registry.ctfy.io&scope=repository:${REPO}:push,pull" \
             | python3 -c 'import json,sys; print(json.load(sys.stdin)["token"])')
           if [ -z "${TOKEN}" ]; then
             echo "::error::the platform returned no registry token"
             exit 1
           fi
-          # Do not ::add-mask:: here: docker login reads this value next, and a
-          # masked multi-kilobyte JWT is redacted inconsistently. It never gets
-          # echoed, and the job ends when the push does.
+          python3 - "$TOKEN" <<'PY'
+          import base64, json, sys
+          payload = sys.argv[1].split(".")[1]
+          payload += "=" * (-len(payload) % 4)
+          access = json.loads(base64.urlsafe_b64decode(payload)).get("access") or []
+          if not access or "push" not in access[0].get("actions", []):
+              sys.exit("::error::the minted token grants no push access: %r" % (access,))
+          PY
           echo "token=${TOKEN}" >> "$GITHUB_OUTPUT"
 
       - name: Log in to the CTFY registry
