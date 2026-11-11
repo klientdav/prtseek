@@ -52,15 +52,20 @@ jobs:
             echo "::error::the platform returned no registry token"
             exit 1
           fi
-          echo "::add-mask::${TOKEN}"
+          # Do not ::add-mask:: here: docker login reads this value next, and a
+          # masked multi-kilobyte JWT is redacted inconsistently. It never gets
+          # echoed, and the job ends when the push does.
           echo "token=${TOKEN}" >> "$GITHUB_OUTPUT"
 
       - name: Log in to the CTFY registry
-        uses: docker/login-action@v3
-        with:
-          registry: registry.ctfy.io
-          username: ctfy
-          password: ${{ steps.registry.outputs.token }}
+        env:
+          CTFY_SCOPE_TOKEN: ${{ steps.registry.outputs.token }}
+        run: |
+          set -euo pipefail
+          # Pass the token on stdin, not as a CLI argument: a masked value can
+          # be mangled by the runner's secret redaction when echoed, and a
+          # token in argv ends up in the process table.
+          printf '%s' "${CTFY_SCOPE_TOKEN}" | docker login registry.ctfy.io -u ctfy --password-stdin
 
       - name: Build and push
         uses: docker/build-push-action@v6
