@@ -30,7 +30,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
 
-      - name: Trade the API token for a registry scope token
+      - name: Verify the token can push (preflight)
         id: registry
         env:
           CTFY_REGISTRY_TOKEN: ${{ secrets.CTFY_REGISTRY_TOKEN }}
@@ -62,17 +62,17 @@ jobs:
           if not access or "push" not in access[0].get("actions", []):
               sys.exit("::error::the minted token grants no push access: %r" % (access,))
           PY
-          echo "token=${TOKEN}" >> "$GITHUB_OUTPUT"
 
       - name: Log in to the CTFY registry
         env:
-          CTFY_SCOPE_TOKEN: ${{ steps.registry.outputs.token }}
+          CTFY_REGISTRY_TOKEN: ${{ secrets.CTFY_REGISTRY_TOKEN }}
         run: |
           set -euo pipefail
-          # Pass the token on stdin, not as a CLI argument: a masked value can
-          # be mangled by the runner's secret redaction when echoed, and a
-          # token in argv ends up in the process table.
-          printf '%s' "${CTFY_SCOPE_TOKEN}" | docker login registry.ctfy.io -u ctfy --password-stdin
+          # Log in with the pf_ API token itself, not the minted scope token.
+          # docker login performs the registry's Basic-auth exchange internally
+          # (401 → token server → Bearer); handing it a JWT it did not mint
+          # makes that exchange a no-op and every push fails.
+          printf '%s' "${CTFY_REGISTRY_TOKEN}" | docker login registry.ctfy.io -u ctfy --password-stdin
 
       - name: Build and push
         uses: docker/build-push-action@v6
