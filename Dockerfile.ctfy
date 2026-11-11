@@ -38,12 +38,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       libssl-dev libffi-dev zlib1g-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Python tooling a CTF solver reaches for constantly. Pinned loosely on purpose:
-# this layer is rebuilt rarely and a CTF run must not depend on a PyPI call.
+# Python tooling a CTF solver reaches for constantly. Versions are pinned to
+# ones that exist on PyPI — an unresolvable pin fails the whole image build, and
+# a CTF run must not depend on a PyPI call at run time either.
 RUN pip install --no-cache-dir \
-      pwntools==4.13.1 pycryptodome==3.21.0 requests==2.32.3 z3-solver==4.13.0.0 \
-      python-sat==1.8.dev13 angr==9.2.117 capstone==5.0.1 unicorn==2.1.1 \
+      pwntools==4.13.1 pycryptodome==3.21.0 requests==2.32.3 \
+      z3-solver==4.13.0.0 python-sat==1.8.dev24 \
+      capstone==5.0.1 unicorn==2.1.1 \
     && rm -rf /root/.cache/pip
+
+# angr is large (~400 MB with its deps) and only helps on a minority of
+# challenges; install it separately so a failure there is visible and easy to
+# drop without losing the rest of the toolchain.
+RUN pip install --no-cache-dir angr==9.2.117 && rm -rf /root/.cache/pip
 
 # Node is useful for JS challenges (web/electron/js-reverse). Playwright is
 # deliberately NOT installed: it drags a browser and ~1 GiB that most challenges
