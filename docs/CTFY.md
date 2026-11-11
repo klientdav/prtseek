@@ -61,6 +61,24 @@ docker push registry.ctfy.io/<你的命名空间>/prtseek-ctfy:v1
 `<你的命名空间>` 就是向导里显示的那个 `registry.ctfy.io/d3c1847d-.../`。
 **不要**用默认的 `ghcr.io/me/agent:1` 占位地址。
 
+### 镜像推送的认证（踩过的坑，照这个做）
+
+平台文档写的是 `docker login registry.ctfy.io -u 任意用户名 -p <ctfy token>`，
+但 `<ctfy token>` 必须是 **`pf_` 开头的 API 令牌**，且令牌模板要选
+「推送智能体镜像」（`registry_push`，权限 `registry: write`）。
+
+三个坑：
+
+1. **必须用 API 令牌，不能用会话令牌。** `POST /api/v1/auth/tokens` 用细粒度令牌调用返回 403、
+   用会话令牌调用要求先 `POST /me/reauthenticate` 重新证明身份（15 分钟窗口）。
+   最省事的是直接走 UI：设置 → API 令牌 → 生成新令牌 → 选「推送智能体镜像」。
+2. **换取 registry token 时必须用 Basic Auth**（`curl -u "任意:pf_xxx"`）。
+   同一个令牌改成 `Authorization: Bearer pf_xxx` 换出来的 JWT 里 `access` 永远是空的，
+   push 会以 `insufficient_scope` 失败——而且是在镜像已经构建完之后才失败。
+3. **`docker login` 用 pf_ 令牌本身，不要喂预生成的 JWT。**
+   docker 自己会走 401 → token server → Bearer 这套交换；给它一个它没生成过的 JWT，
+   交换就变成空操作，守护进程仍然认为未认证。
+
 ### B. 本机没有 Docker（当前这台机器）
 
 用 GitHub Actions 构建推送（仓库已公开，workflow 已就位）：
