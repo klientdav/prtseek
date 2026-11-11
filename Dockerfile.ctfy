@@ -1,0 +1,66 @@
+# CTFY-0001 agent image for prtseek.
+#
+# This is a different image from the interactive one: instead of the web server
+# (Dockerfile / docker-compose.yml), it ships a single headless binary that the
+# platform starts once per run and reads result.json back from.
+#
+#   docker build -f Dockerfile.ctfy -t <registry>/prtseek-ctfy:v1 .
+#
+# The platform contract (https://<platform>/docs/standards/CTFY-0001) drives
+# three choices here:
+#   * ENTRYPOINT is an absolute path. The platform sets the container's cwd to
+#     $CTFY_WORK_DIR, so a relative entrypoint would not resolve.
+#   * No build step, no server, no port, no volume — the run ends when the
+#     process exits, and only the working directory is collected.
+#   * The CTF toolset is baked in: the platform may cut internet access during
+#     play, so nothing may be fetched at run time.
+
+FROM golang:1.26.10-bookworm AS go-build
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+# Build only the CTFY runner. No `embedui` tag, so the web bundle is not needed.
+RUN CGO_ENABLED=0 go build -trimpath \
+      -ldflags="-s -w -X main.version=prtseek-ctfy-v1" \
+      -o /prtseek-ctfy ./cmd/prtseek-ctfy
+
+FROM python:3.12-slim-bookworm
+
+# A CTF image has to carry its own tools: the deployment may forbid network
+# access during play, and installing at run time would be too late and too slow.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ca-certificates curl wget git jq unzip file xxd less vim-tiny \
+      ripgrep binutils gdb strace ltrace \
+      dnsutils iputils-ping netcat-openbsd inetutils-telnet whois nmap \
+      openssh-client sshpass socat \
+      python3-pip python3-dev build-essential \
+      libssl-dev libffi-dev zlib1g-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Python tooling a CTF solver reaches for constantly. Pinned loosely on purpose:
+# this layer is rebuilt rarely and a CTF run must not depend on a PyPI call.
+RUN pip install --no-cache-dir \
+      pwntools==4.13.1 pycryptodome==3.21.0 requests==2.32.3 z3-solver==4.13.0.0 \
+      python-sat==1.8.dev13 angr==9.2.117 capstone==5.0.1 unicorn==2.1.1 \
+    && rm -rf /root/.cache/pip
+
+# Node is useful for JS challenges (web/electron/js-reverse). Playwright is
+# deliberately NOT installed: it drags a browser and ~1 GiB that most challenges
+# never need, and the platform's 8 GiB covers many other things.
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY --from=go-build /prtseek-ctfy /app/prtseek-ctfy
+RUN chmod +x /app/prtseek-ctfy
+
+# The platform supplies cwd = $CTFY_WORK_DIR and the briefing there. We do not
+# set WORKDIR to it: a WORKDIR that does not exist yet would break the run, and
+# the binary reads CTFY_WORK_DIR itself with /ctfy/work as the documented default.
+ENV CTFY_WORK_DIR=/ctfy/work
+RUN mkdir -p /ctfy/work
+
+# Absolute path is mandatory (see the header note).
+ENTRYPOINT ["/app/prtseek-ctfy"]
